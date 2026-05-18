@@ -14,7 +14,7 @@ RUN python -m pip install --upgrade pip setuptools wheel \
   && git clone --branch "${FACEFUSION_REF}" --depth 1 https://github.com/facefusion/facefusion.git /opt/facefusion \
   && cd /opt/facefusion \
   && python -m pip install -r requirements.txt \
-  && python install.py --onnxruntime cuda \
+  && python install.py --onnxruntime cuda --skip-conda \
   && (python facefusion.py force-download \
     --processors face_swapper face_enhancer \
     --face-swapper-model inswapper_128_fp16 \
