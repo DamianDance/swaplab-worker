@@ -1,0 +1,12 @@
+.env
+.env.*
+!.env.example
+.git
+.github
+node_modules
+dist
+data
+engines
+.DS_Store
+npm-debug.log*
+*.local
