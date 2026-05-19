@@ -26,7 +26,16 @@ ESSENTIAL_MODELS = [
     "bisenet_resnet_34.onnx",
     "arcface_w600k_r50.onnx",
     "inswapper_128_fp16.onnx",
+    "hyperswap_1a_256.onnx",
+    "simswap_unofficial_512.onnx",
+    "crossface_simswap.onnx",
     "gfpgan_1.4.onnx",
+]
+
+PREFETCH_MODELS = [
+    ("inswapper_128_fp16", "512x512"),
+    ("hyperswap_1a_256", "512x512"),
+    ("simswap_unofficial_512", "512x512"),
 ]
 
 
@@ -45,19 +54,7 @@ def health():
 def warmup(authorization: Optional[str] = Header(default=None)):
     verify_token(authorization)
     ensure_facefusion()
-    command = [
-        sys.executable,
-        str(FACEFUSION_DIR / "facefusion.py"),
-        "force-download",
-        "--download-scope",
-        "lite",
-        "--download-providers",
-        "github",
-        "huggingface",
-        "--log-level",
-        "info",
-    ]
-    subprocess.run(command, cwd=FACEFUSION_DIR, check=True, timeout=int(os.environ.get("SWAPLAB_WARMUP_TIMEOUT_SECONDS", "900")))
+    prefetch_models()
     return {
         "ok": True,
         "gpu": gpu_name(),
@@ -155,6 +152,54 @@ def verify_token(authorization: Optional[str]):
 def ensure_facefusion():
     if not (FACEFUSION_DIR / "facefusion.py").exists():
         raise HTTPException(status_code=500, detail=f"FaceFusion not found at {FACEFUSION_DIR}.")
+
+
+def prefetch_models():
+    warmup_dir = WORK_DIR / "_warmup"
+    warmup_dir.mkdir(parents=True, exist_ok=True)
+    source_path = warmup_dir / "source.jpg"
+    target_path = warmup_dir / "target.mp4"
+    output_path = warmup_dir / "result.mp4"
+    temp_path = warmup_dir / "temp"
+    timeout = int(os.environ.get("SWAPLAB_WARMUP_TIMEOUT_SECONDS", "900"))
+
+    if not source_path.exists():
+        subprocess.run([
+            "ffmpeg", "-y", "-f", "lavfi", "-i", "color=c=black:s=320x320",
+            "-frames:v", "1", str(source_path)
+        ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
+    if not target_path.exists():
+        subprocess.run([
+            "ffmpeg", "-y", "-f", "lavfi", "-i", "color=c=black:s=320x320:r=1:d=0.2",
+            "-pix_fmt", "yuv420p", str(target_path)
+        ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
+
+    for swapper_model, pixel_boost in PREFETCH_MODELS:
+        if output_path.exists():
+            output_path.unlink()
+        shutil.rmtree(temp_path, ignore_errors=True)
+        command = [
+            sys.executable,
+            str(FACEFUSION_DIR / "facefusion.py"),
+            "headless-run",
+            "--source-paths", str(source_path),
+            "--target-path", str(target_path),
+            "--output-path", str(output_path),
+            "--temp-path", str(temp_path),
+            "--processors", "face_swapper", "face_enhancer",
+            "--face-swapper-model", swapper_model,
+            "--face-swapper-pixel-boost", pixel_boost,
+            "--face-enhancer-model", "gfpgan_1.4",
+            "--execution-providers", "cpu",
+            "--output-video-encoder", "libx264",
+            "--output-video-quality", "70",
+            "--output-video-preset", "ultrafast",
+            "--log-level", "error",
+        ]
+        try:
+            subprocess.run(command, cwd=FACEFUSION_DIR, check=True, timeout=timeout)
+        except subprocess.CalledProcessError:
+            pass
 
 
 def run_facefusion(command, video_encoder: str, output_path: Path):

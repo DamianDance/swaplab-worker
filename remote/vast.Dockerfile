@@ -20,7 +20,30 @@ RUN python -m pip install --upgrade pip setuptools wheel \
   && python -m pip install -r requirements.txt \
   && python install.py --onnxruntime cuda --skip-conda \
   && python -c "import ctypes, onnxruntime as ort; [ctypes.CDLL(lib) for lib in ('libcublasLt.so.12', 'libcudnn.so.9')]; providers = ort.get_available_providers(); print('ONNX Runtime providers:', providers); assert 'CUDAExecutionProvider' in providers" \
-  && python facefusion.py force-download --download-scope lite --download-providers github huggingface --log-level info
+  && mkdir -p /tmp/swaplab-warmup \
+  && ffmpeg -y -f lavfi -i color=c=black:s=320x320 -frames:v 1 /tmp/swaplab-warmup/source.jpg >/dev/null 2>&1 \
+  && ffmpeg -y -f lavfi -i color=c=black:s=320x320:r=1:d=0.2 -pix_fmt yuv420p /tmp/swaplab-warmup/target.mp4 >/dev/null 2>&1 \
+  && for spec in "inswapper_128_fp16 512x512" "hyperswap_1a_256 512x512" "simswap_unofficial_512 512x512"; do \
+    set -- $spec; \
+    python facefusion.py headless-run \
+      --source-paths /tmp/swaplab-warmup/source.jpg \
+      --target-path /tmp/swaplab-warmup/target.mp4 \
+      --output-path /tmp/swaplab-warmup/result.mp4 \
+      --temp-path /tmp/swaplab-warmup/temp \
+      --processors face_swapper face_enhancer \
+      --face-swapper-model "$1" \
+      --face-swapper-pixel-boost "$2" \
+      --face-enhancer-model gfpgan_1.4 \
+      --execution-providers cpu \
+      --output-video-encoder libx264 \
+      --output-video-quality 70 \
+      --output-video-preset ultrafast \
+      --log-level error || true; \
+  done \
+  && test -f /opt/facefusion/.assets/models/inswapper_128_fp16.onnx \
+  && test -f /opt/facefusion/.assets/models/hyperswap_1a_256.onnx \
+  && test -f /opt/facefusion/.assets/models/simswap_unofficial_512.onnx \
+  && test -f /opt/facefusion/.assets/models/gfpgan_1.4.onnx
 
 RUN python -m pip install fastapi uvicorn python-multipart
 
